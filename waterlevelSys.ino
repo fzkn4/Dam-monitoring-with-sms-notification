@@ -31,7 +31,7 @@ SoftwareSerial sim(gsmTX, gsmRX);
 
 unsigned long lastSmsTime = 0;
 const unsigned long smsInterval = 5000; // 5 seconds
-const String phoneNumber = "+639753483020"; // REPLACE WITH ACTUAL NUMBER
+const String phoneNumber = "+639xxxxxxxxx"; // REPLACE WITH ACTUAL NUMBER
 
 // VIN -> External 4V Supply (NOT Arduino 5V)
 // GND -> Arduino GND (Common Ground)
