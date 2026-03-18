@@ -4,6 +4,7 @@
 
 // LCD
 LiquidCrystal_I2C lcd(0x27, 16, 2);
+// LiquidCrystal_I2C lcd(0x3F, 16, 2); // Try 0x3f if 0x27 shows pixel blocks
 
 // Ultrasonic
 const int trigPin = 10;
@@ -33,9 +34,6 @@ unsigned long lastSmsTime = 0;
 const unsigned long smsInterval = 5000; // 5 seconds
 const String phoneNumbers[] = {
   "+63XXXXXXX", 
-  "+63XXXXXXX",
-  "+63XXXXXXX",
-  "+63XXXXXXX" // Add more numbers here separated by commas
 };
 const int numRecipients = sizeof(phoneNumbers) / sizeof(phoneNumbers[0]);
 
@@ -109,7 +107,7 @@ void setup() {
   while(sim.available()) Serial.write(sim.read());
 
   Serial.println("\n--- End of Init Check ---");
-
+  delay(1000); // Power stabilization delay
   lcd.init();
   lcd.backlight();
 
@@ -123,29 +121,9 @@ void setup() {
 
 void loop() {
 
-  // ---- SENSOR READING ----
-  bool isFloatTriggered = (digitalRead(floatSwitch) == LOW);
-  distance = readUltrasonic();
-  
-  if (distance < 1) distance = 1;
-  if (distance > 20) distance = 20;
-  percentage = map(distance, 1, 20, 0, 100);
+  // ---- FLOAT SWITCH PRIORITY (TANK FULL) ----
+  if (digitalRead(floatSwitch) == LOW) {
 
-  // ---- SMS ALERT TRIGGER (Common logic for both sensors) ----
-  if (isFloatTriggered || distance <= 5) {
-    if (millis() - lastSmsTime >= smsInterval || lastSmsTime == 0) {
-      for (int i = 0; i < numRecipients; i++) {
-        sendSMS(phoneNumbers[i], "WARNING FLOOD!!!");
-      }
-      lastSmsTime = millis();
-      if (lastSmsTime == 0) lastSmsTime = 1; // Prevent zero
-    }
-  } else {
-    lastSmsTime = 0; // Reset SMS timer when no danger
-  }
-
-  // ---- DISPLAY AND FEEDBACK LOGIC ----
-  if (isFloatTriggered) {
     for (int i = 0; i < ledCount; i++) {
       digitalWrite(leds[i], LOW);
     }
@@ -156,23 +134,44 @@ void loop() {
     lcd.print("FULL LOAD     ");
 
     Serial.println("ALERT: Tank is FULL! Float switch triggered.");
-    digitalWrite(buzzer, HIGH);
-    
-    delay(300);
-  } else {
-    // Normal level mode (Ultrasonic feedback)
-    Serial.print("Distance: ");
-    Serial.print(distance);
-    Serial.print(" cm | Level: ");
-    Serial.print(percentage);
-    Serial.println(" %");
 
-    updateLEDs(percentage);
-    updateLCD(distance, percentage);
-    controlBuzzer(distance);
-    
-    delay(200);
+    digitalWrite(buzzer, HIGH);
+
+    // Check if we need to send an SMS (every 5 seconds)
+    if (millis() - lastSmsTime >= smsInterval || lastSmsTime == 0) {
+      for (int i = 0; i < numRecipients; i++) {
+        sendSMS(phoneNumbers[i], "WARNING FLOOD!!!");
+      }
+      lastSmsTime = millis();
+      if (lastSmsTime == 0) lastSmsTime = 1; // Prevent zero
+    }
+
+    delay(300);
+
+    return;
+  } else {
+    lastSmsTime = 0; // Reset SMS timer when not full
   }
+
+  // ---- ULTRASONIC NORMAL LEVEL MODE ----
+  distance = readUltrasonic();
+
+  if (distance < 1) distance = 1;
+  if (distance > 20) distance = 20;
+
+  percentage = map(distance, 1, 20, 0, 100);
+
+  Serial.print("Distance: ");
+  Serial.print(distance);
+  Serial.print(" cm | Level: ");
+  Serial.print(percentage);
+  Serial.println(" %");
+
+  updateLEDs(percentage);
+  updateLCD(distance, percentage);
+  controlBuzzer(distance);
+
+  delay(200);
 }
 
 // -------- FUNCTIONS --------
