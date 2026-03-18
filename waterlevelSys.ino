@@ -31,7 +31,13 @@ SoftwareSerial sim(gsmTX, gsmRX);
 
 unsigned long lastSmsTime = 0;
 const unsigned long smsInterval = 5000; // 5 seconds
-const String phoneNumber = "+639xxxxxxxxx"; // REPLACE WITH ACTUAL NUMBER
+const String phoneNumbers[] = {
+  "+63XXXXXXX", 
+  "+63XXXXXXX",
+  "+63XXXXXXX",
+  "+63XXXXXXX" // Add more numbers here separated by commas
+};
+const int numRecipients = sizeof(phoneNumbers) / sizeof(phoneNumbers[0]);
 
 // VIN -> External 4V Supply (NOT Arduino 5V)
 // GND -> Arduino GND (Common Ground)
@@ -69,18 +75,28 @@ void setup() {
   delay(100);
   sim.println("AT+IPR=9600"); // Force module to 9600 baud for stability
   delay(500);
-
+  
   // Restart SoftwareSerial at the stable 9600 baud rate
   sim.begin(9600);
+  delay(100);
+  sim.println("AT&W"); // SAVE THE SETTING to non-volatile memory
+  delay(500);
   
   Serial.println("Checking GSM Module...");
   sim.println("AT");
   delay(500);
-  while(sim.available()) Serial.write(sim.read());
+  updateSerial(); // Print response
   
   // Wait to allow the modem to find a cell tower and register to it
   Serial.println("Waiting 15s for the module to connect to the cell network...");
-  delay(15000); 
+  
+  // NON-BLOCKING MONITOR LOOP
+  // Instead of delay(15000), we read from sim and write to Serial
+  // This helps us see if the module resets or sends URCs (like +CREG: 1)
+  unsigned long startWait = millis();
+  while (millis() - startWait < 15000) {
+    updateSerial();
+  }
 
   // Check signal quality
   sim.println("AT+CSQ");
@@ -107,9 +123,29 @@ void setup() {
 
 void loop() {
 
-  // ---- FLOAT SWITCH PRIORITY (TANK FULL) ----
-  if (digitalRead(floatSwitch) == LOW) {
+  // ---- SENSOR READING ----
+  bool isFloatTriggered = (digitalRead(floatSwitch) == LOW);
+  distance = readUltrasonic();
+  
+  if (distance < 1) distance = 1;
+  if (distance > 20) distance = 20;
+  percentage = map(distance, 1, 20, 0, 100);
 
+  // ---- SMS ALERT TRIGGER (Common logic for both sensors) ----
+  if (isFloatTriggered || distance <= 5) {
+    if (millis() - lastSmsTime >= smsInterval || lastSmsTime == 0) {
+      for (int i = 0; i < numRecipients; i++) {
+        sendSMS(phoneNumbers[i], "WARNING FLOOD!!!");
+      }
+      lastSmsTime = millis();
+      if (lastSmsTime == 0) lastSmsTime = 1; // Prevent zero
+    }
+  } else {
+    lastSmsTime = 0; // Reset SMS timer when no danger
+  }
+
+  // ---- DISPLAY AND FEEDBACK LOGIC ----
+  if (isFloatTriggered) {
     for (int i = 0; i < ledCount; i++) {
       digitalWrite(leds[i], LOW);
     }
@@ -120,42 +156,23 @@ void loop() {
     lcd.print("FULL LOAD     ");
 
     Serial.println("ALERT: Tank is FULL! Float switch triggered.");
-
     digitalWrite(buzzer, HIGH);
-
-    // Check if we need to send an SMS (every 5 seconds)
-    if (millis() - lastSmsTime >= smsInterval || lastSmsTime == 0) {
-      sendSMS("WARNING: TANK IS FULL!");
-      lastSmsTime = millis();
-      if (lastSmsTime == 0) lastSmsTime = 1; // Prevent zero
-    }
-
+    
     delay(300);
-
-    return;
   } else {
-    lastSmsTime = 0; // Reset SMS timer when not full
+    // Normal level mode (Ultrasonic feedback)
+    Serial.print("Distance: ");
+    Serial.print(distance);
+    Serial.print(" cm | Level: ");
+    Serial.print(percentage);
+    Serial.println(" %");
+
+    updateLEDs(percentage);
+    updateLCD(distance, percentage);
+    controlBuzzer(distance);
+    
+    delay(200);
   }
-
-  // ---- ULTRASONIC NORMAL LEVEL MODE ----
-  distance = readUltrasonic();
-
-  if (distance < 1) distance = 1;
-  if (distance > 20) distance = 20;
-
-  percentage = map(distance, 1, 20, 0, 100);
-
-  Serial.print("Distance: ");
-  Serial.print(distance);
-  Serial.print(" cm | Level: ");
-  Serial.print(percentage);
-  Serial.println(" %");
-
-  updateLEDs(percentage);
-  updateLCD(distance, percentage);
-  controlBuzzer(distance);
-
-  delay(200);
 }
 
 // -------- FUNCTIONS --------
@@ -215,8 +232,9 @@ void controlBuzzer(int dist) {
   }
 }
 
-void sendSMS(String message) {
-  Serial.println("Attempting to send SMS...");
+void sendSMS(String number, String message) {
+  Serial.print("Attempting to send SMS to ");
+  Serial.println(number);
 
   // Clear any old data
   while(sim.available()) sim.read();
@@ -233,7 +251,7 @@ void sendSMS(String message) {
 
   // Set recipient
   sim.print("AT+CMGS=\"");
-  sim.print(phoneNumber);
+  sim.print(number);
   sim.println("\"");
   delay(300);
   updateSerial();
